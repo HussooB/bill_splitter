@@ -1,77 +1,56 @@
 import { useState } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Receipt, Users } from "lucide-react";
+import { Users } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
-interface JoinRoomResponse {
-  room: {
-    id: number;
-    title: string;
-    menu: string[];
-  };
-}
 const API_URL = "https://bill-splitter-backend-9b7b.onrender.com/api";
 
 const JoinRoom: React.FC = () => {
-  const { roomId } = useParams<{ roomId: string }>();
   const navigate = useNavigate();
   const { toast } = useToast();
 
-  const [displayName, setDisplayName] = useState<string>("");
-  const [passcode, setPasscode] = useState<string>("");
-  const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [roomId, setRoomId] = useState("");
+  const [displayName, setDisplayName] = useState("");
+  const [isLoading, setIsLoading] = useState(false);
 
-  const handleJoin = async (e: React.FormEvent<HTMLFormElement>) => {
+  const handleJoin = async (e: React.FormEvent) => {
     e.preventDefault();
-
-    if (!roomId) {
-      toast({
-        title: "Error",
-        description: "Invalid room ID.",
-      });
+    if (!roomId || !displayName) {
+      toast({ title: "Missing info", description: "Enter Room ID and Display Name" });
       return;
     }
 
-    setIsLoading(true);
-
     try {
-      const token = localStorage.getItem("token"); // Ensure user is authenticated
+      setIsLoading(true);
+      const token = localStorage.getItem("token");
+      if (!token) throw new Error("Unauthorized");
 
-      const response = await fetch(`${API_URL}/rooms/join`, {
+      const res = await fetch(`${API_URL}/rooms/join`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: token ? `Bearer ${token}` : "",
+          Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({
-          roomId: Number(roomId),
-          displayName,
-          passcode: passcode || undefined,
-        }),
+        body: JSON.stringify({ roomId, displayName }),
       });
 
-      if (!response.ok) {
-        throw new Error("Failed to join room");
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(text || "Failed to join room");
       }
 
-      const data: JoinRoomResponse = await response.json();
+      const data = await res.json();
+      toast({ title: "Joined!", description: `Welcome to ${data.room.title}` });
 
-      toast({
-        title: "Joined successfully!",
-        description: `Welcome to "${data.room.title}"`,
-      });
-
+      // ✅ Redirect to RoomChat page (room.tsx)
       navigate(`/rooms/${data.room.id}`);
-    } catch (error) {
-      console.error(error);
-      toast({
-        title: "Error",
-        description: "Could not join the room. Please try again.",
-      });
+    } catch (err: any) {
+      console.error(err);
+      toast({ title: "Error", description: err.message || "Could not join room" });
     } finally {
       setIsLoading(false);
     }
@@ -79,71 +58,45 @@ const JoinRoom: React.FC = () => {
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-primary/5 via-background to-accent/5 p-4">
-      <Card className="w-full max-w-md p-8 shadow-medium">
-        {/* Header */}
-        <div className="text-center space-y-4 mb-8">
-          <div className="flex items-center justify-center gap-2 mb-2">
-            <div className="h-12 w-12 rounded-xl bg-gradient-to-br from-primary to-primary-hover flex items-center justify-center shadow-md">
-              <Users className="h-6 w-6 text-white" />
-            </div>
-          </div>
-          <h1 className="text-2xl font-bold text-foreground">Join Room</h1>
-          <p className="text-muted-foreground">
-            Enter your details to join this bill splitting session
-          </p>
-          <div className="px-4 py-2 rounded-lg bg-muted inline-flex items-center gap-2 text-sm">
-            <Receipt className="h-4 w-4" />
-            <span className="font-mono">Room: {roomId}</span>
-          </div>
+      <Card className="w-full max-w-md p-8 shadow-medium space-y-4">
+        <div className="text-center">
+          <Users className="h-8 w-8 mx-auto text-primary" />
+          <h1 className="text-2xl font-bold mt-2">Join Room</h1>
         </div>
 
-        {/* Form */}
         <form onSubmit={handleJoin} className="space-y-4">
+          <div className="space-y-2">
+            <Label htmlFor="roomId">Room ID</Label>
+            <Input
+              id="roomId"
+              type="text"
+              placeholder="Enter room ID"
+              value={roomId}
+              onChange={(e) => setRoomId(e.target.value)}
+              required
+            />
+          </div>
+
           <div className="space-y-2">
             <Label htmlFor="displayName">Display Name</Label>
             <Input
               id="displayName"
               type="text"
-              placeholder="John Doe"
+              placeholder="Your display name"
               value={displayName}
               onChange={(e) => setDisplayName(e.target.value)}
               required
             />
           </div>
 
-          <div className="space-y-2">
-            <Label htmlFor="passcode">
-              Passcode <span className="text-muted-foreground">(optional)</span>
-            </Label>
-            <Input
-              id="passcode"
-              type="text"
-              placeholder="Enter room passcode"
-              value={passcode}
-              onChange={(e) => setPasscode(e.target.value)}
-            />
-          </div>
-
-          <Button
-            type="submit"
-            className="w-full"
-            size="lg"
-            disabled={isLoading}
-          >
+          <Button type="submit" className="w-full" disabled={isLoading}>
             {isLoading ? "Joining..." : "Join Room"}
           </Button>
-        </form>
 
-        {/* Footer */}
-        <div className="mt-6 text-center">
-          <Button
-            variant="ghost"
-            onClick={() => navigate("/")}
-            className="text-sm text-muted-foreground"
-          >
-            ← Back to home
+          <Button type="button" variant="ghost" className="w-full" onClick={() => navigate("/rooms")}>
+            Cancel
           </Button>
-        </div>
+        </form>
       </Card>
     </div>
   );
