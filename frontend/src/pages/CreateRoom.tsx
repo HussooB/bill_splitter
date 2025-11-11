@@ -4,10 +4,8 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { ArrowLeft, Plus, X } from "lucide-react";
+import { ArrowLeft, Plus, X, Copy } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-
-
 
 const API_URL = "https://bill-splitter-backend-9b7b.onrender.com/api";
 
@@ -32,33 +30,24 @@ const CreateRoom: React.FC = () => {
   const navigate = useNavigate();
   const { toast } = useToast();
 
-  const [title, setTitle] = useState<string>("");
+  const [title, setTitle] = useState("");
   const [menuItems, setMenuItems] = useState<MenuItem[]>([
     { id: "1", name: "", price: "" },
   ]);
-  const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [isLoading, setIsLoading] = useState(false);
+  const [createdRoom, setCreatedRoom] = useState<CreateRoomResponse | null>(null);
 
-  // ✅ Add new menu item
   const addMenuItem = () => {
-    setMenuItems([
-      ...menuItems,
-      { id: Date.now().toString(), name: "", price: "" },
-    ]);
+    setMenuItems([...menuItems, { id: Date.now().toString(), name: "", price: "" }]);
   };
 
-  // ✅ Remove menu item
   const removeMenuItem = (id: string) => {
     if (menuItems.length > 1) {
       setMenuItems(menuItems.filter((item) => item.id !== id));
     }
   };
 
-  // ✅ Update menu item field
-  const updateMenuItem = (
-    id: string,
-    field: "name" | "price",
-    value: string
-  ) => {
+  const updateMenuItem = (id: string, field: "name" | "price", value: string) => {
     setMenuItems(
       menuItems.map((item) =>
         item.id === id ? { ...item, [field]: value } : item
@@ -66,7 +55,6 @@ const CreateRoom: React.FC = () => {
     );
   };
 
-  // ✅ Handle Form Submit
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
 
@@ -75,12 +63,11 @@ const CreateRoom: React.FC = () => {
       return;
     }
 
-    // ✅ Convert menu items to proper format
     const validMenu = menuItems
-      .filter((item) => item.name.trim().length > 0) // remove empty names
+      .filter((item) => item.name.trim().length > 0)
       .map((item) => ({
         name: item.name.trim(),
-        price: parseFloat(item.price), // convert string to number
+        price: parseFloat(item.price),
       }));
 
     if (validMenu.length === 0) {
@@ -102,10 +89,7 @@ const CreateRoom: React.FC = () => {
           "Content-Type": "application/json",
           Authorization: token ? `Bearer ${token}` : "",
         },
-        body: JSON.stringify({
-          title,
-          menu: validMenu, // ✅ send valid menu with numbers
-        }),
+        body: JSON.stringify({ title, menu: validMenu }),
       });
 
       const text = await response.text();
@@ -114,13 +98,12 @@ const CreateRoom: React.FC = () => {
       if (!response.ok) throw new Error(text || "Failed to create room");
 
       const data: CreateRoomResponse = JSON.parse(text);
+      setCreatedRoom(data);
 
       toast({
         title: "Room created!",
         description: "Your room has been created successfully.",
       });
-
-      navigate(data.roomLink);
     } catch (error) {
       console.error(error);
       toast({
@@ -132,8 +115,23 @@ const CreateRoom: React.FC = () => {
     }
   };
 
+  const handleCopy = () => {
+    if (createdRoom) {
+      navigator.clipboard.writeText(createdRoom.room.id.toString());
+      toast({ title: "Copied", description: "Room ID copied to clipboard." });
+    }
+  };
+
+  const handleJoin = () => {
+    if (createdRoom) navigate(createdRoom.roomLink);
+  };
+
   return (
-    <div className="min-h-screen bg-gradient-to-br from-primary/5 via-background to-accent/5">
+    <div
+      className={`min-h-screen relative bg-gradient-to-br from-primary/5 via-background to-accent/5 transition-all duration-300 ${
+        createdRoom ? "backdrop-blur-sm" : ""
+      }`}
+    >
       {/* Header */}
       <header className="border-b bg-card/50 backdrop-blur-sm sticky top-0 z-10 shadow-soft">
         <div className="container mx-auto px-4 py-4">
@@ -237,6 +235,33 @@ const CreateRoom: React.FC = () => {
           </form>
         </Card>
       </main>
+
+      {/* ✅ Modal for Created Room */}
+      {createdRoom && (
+        <div className="fixed inset-0 flex items-center justify-center z-50">
+          <div className="absolute inset-0 bg-background/40 backdrop-blur-md"></div>
+          <Card className="relative z-10 w-full max-w-sm p-6 text-center space-y-4 shadow-xl border-border">
+            <h2 className="text-xl font-bold text-foreground">
+              Room Created 🎉
+            </h2>
+            <p className="text-muted-foreground text-sm">
+              Share this Room ID with others to let them join:
+            </p>
+            <div className="flex items-center justify-center gap-2">
+              <code className="bg-muted px-3 py-1 rounded text-lg font-semibold">
+                {createdRoom.room.id}
+              </code>
+              <Button size="icon" variant="ghost" onClick={handleCopy}>
+                <Copy className="h-5 w-5" />
+              </Button>
+            </div>
+
+            <Button className="w-full mt-4" onClick={handleJoin}>
+              Join Room
+            </Button>
+          </Card>
+        </div>
+      )}
     </div>
   );
 };

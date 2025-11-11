@@ -14,13 +14,12 @@ const JoinRoom: React.FC = () => {
   const { toast } = useToast();
 
   const [roomId, setRoomId] = useState("");
-  const [displayName, setDisplayName] = useState("");
   const [isLoading, setIsLoading] = useState(false);
 
   const handleJoin = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!roomId || !displayName) {
-      toast({ title: "Missing info", description: "Enter Room ID and Display Name" });
+    if (!roomId) {
+      toast({ title: "Missing info", description: "Enter Room ID" });
       return;
     }
 
@@ -35,7 +34,7 @@ const JoinRoom: React.FC = () => {
           "Content-Type": "application/json",
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ roomId, displayName }),
+        body: JSON.stringify({ roomId }),
       });
 
       if (!res.ok) {
@@ -77,23 +76,16 @@ const JoinRoom: React.FC = () => {
             />
           </div>
 
-          <div className="space-y-2">
-            <Label htmlFor="displayName">Display Name</Label>
-            <Input
-              id="displayName"
-              type="text"
-              placeholder="Your display name"
-              value={displayName}
-              onChange={(e) => setDisplayName(e.target.value)}
-              required
-            />
-          </div>
-
           <Button type="submit" className="w-full" disabled={isLoading}>
             {isLoading ? "Joining..." : "Join Room"}
           </Button>
 
-          <Button type="button" variant="ghost" className="w-full" onClick={() => navigate("/rooms")}>
+          <Button
+            type="button"
+            variant="ghost"
+            className="w-full"
+            onClick={() => navigate("/rooms")}
+          >
             Cancel
           </Button>
         </form>

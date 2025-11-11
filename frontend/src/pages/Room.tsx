@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
-import { Paperclip } from "lucide-react";
+import { Paperclip, X } from "lucide-react";
 
 const API_URL = "https://bill-splitter-backend-9b7b.onrender.com/api";
 
@@ -13,8 +13,14 @@ interface Message {
   id?: string;
   senderName: string;
   text?: string;
-  createdAt: string;
   proofUrl?: string;
+  createdAt: string;
+}
+
+interface MenuItem {
+  id: string;
+  name: string;
+  price: number;
 }
 
 const Room: React.FC = () => {
@@ -27,6 +33,7 @@ const Room: React.FC = () => {
   const [input, setInput] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const [roomTitle, setRoomTitle] = useState("");
+  const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
   const [displayName, setDisplayName] = useState(
     localStorage.getItem("userName") || "You"
   );
@@ -34,11 +41,15 @@ const Room: React.FC = () => {
 
   const token = localStorage.getItem("token");
 
-  // Scroll to bottom on new messages
-  const scrollToBottom = () => {
+  // Scroll to bottom
+  const scrollToBottom = () =>
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  };
   useEffect(scrollToBottom, [messages]);
+
+  // Sort messages by createdAt
+  const sortedMessages = [...messages].sort(
+    (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+  );
 
   // Fetch room info and messages
   useEffect(() => {
@@ -50,14 +61,20 @@ const Room: React.FC = () => {
 
     const fetchRoom = async () => {
       try {
-        const res = await fetch(`${API_URL}/rooms`, {
+        const res = await fetch(`${API_URL}/rooms/${roomId}`, {
           headers: { Authorization: `Bearer ${token}` },
         });
-        if (!res.ok) throw new Error("Failed to fetch rooms");
+        if (!res.ok) throw new Error("Failed to fetch room");
         const data = await res.json();
-        const room = data.rooms.find((r: any) => r.id === roomId);
-        if (!room) throw new Error("Room not found");
+        const room = data.room;
         setRoomTitle(room.title);
+        setMenuItems(
+          (room.menu || []).map((item: any, index: number) => ({
+            id: index.toString(),
+            name: item.name || item,
+            price: item.price || 0,
+          }))
+        );
       } catch (err: any) {
         toast({ title: "Error", description: err.message });
         navigate("/rooms");
@@ -97,19 +114,16 @@ const Room: React.FC = () => {
     });
 
     s.on("connect", () => console.log("Socket connected:", s.id));
-
     s.emit("joinRoom", roomId);
 
-    // Listen for new text messages
     s.on("newMessage", (msg: Message) => {
       if (!msg.createdAt) msg.createdAt = new Date().toISOString();
       setMessages((prev) => {
-        if (prev.some((m) => m.id === msg.id)) return prev; // prevent duplicates
+        if (prev.some((m) => m.id === msg.id)) return prev;
         return [...prev, msg];
       });
     });
 
-    // Listen for new files/proofs
     s.on("newProof", (proof: any) => {
       const newMsg: Message = {
         id: proof.id,
@@ -129,53 +143,79 @@ const Room: React.FC = () => {
     };
   }, [roomId, token, displayName]);
 
-  // Send text message
-  const handleSendMessage = () => {
-    if (!input.trim() || !socket) return;
+  // Unified send: text + optional file
+  const handleSend = async () => {
+    if (!input.trim() && !file) return;
 
-    const msg = {
-      roomId,
-      senderName: displayName,
-      text: input,
-    };
+    // Send text message
+    if (input.trim() && socket) {
+      const msg = { roomId, senderName: displayName, text: input };
+      socket.emit("sendMessage", msg);
+      setMessages((prev) => [...prev, { ...msg, createdAt: new Date().toISOString() }]);
+      setInput("");
+    }
 
-    socket.emit("sendMessage", msg);
-    setInput(""); // clear input
-  };
+    // Send file
+    if (file && token) {
+      const formData = new FormData();
+      formData.append("file", file);
 
-  // Send file
-  const handleSendFile = async () => {
-    if (!file || !token) return;
+      try {
+        const res = await fetch(`${API_URL}/proofs/${roomId}`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}` },
+          body: formData,
+        });
+        if (!res.ok) throw new Error("Failed to upload file");
+        const data = await res.json();
 
-    const formData = new FormData();
-    formData.append("file", file);
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: data.proof.id,
+            senderName: displayName,
+            proofUrl: data.proof.fileUrl,
+            createdAt: data.proof.createdAt,
+          },
+        ]);
 
-    try {
-      const res = await fetch(`${API_URL}/proofs/${roomId}`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${token}` },
-        body: formData,
-      });
-      if (!res.ok) throw new Error("Failed to upload file");
-      setFile(null);
-      toast({ title: "File sent!" });
-    } catch (err: any) {
-      console.error(err);
-      toast({ title: "Error sending file", description: err.message });
+        toast({ title: "File sent!" });
+        setFile(null);
+      } catch (err: any) {
+        console.error(err);
+        toast({ title: "Error sending file", description: err.message });
+      }
     }
   };
 
+  // Total bill calculation
+  const totalBill = menuItems.reduce((sum, item) => sum + (item.price || 0), 0);
+
   return (
     <div className="min-h-screen flex flex-col bg-gradient-to-br from-primary/5 via-background to-accent/5 p-4">
-      <header className="mb-4 flex justify-between items-center">
-        <h1 className="text-2xl font-bold">{roomTitle}</h1>
-        <Button variant="ghost" onClick={() => navigate("/rooms")}>
-          Back to Rooms
-        </Button>
+      <header className="mb-4">
+        <div className="flex justify-between items-center">
+          <h1 className="text-2xl font-bold">{roomTitle}</h1>
+          <Button variant="ghost" onClick={() => navigate("/rooms")}>Back</Button>
+        </div>
+
+        {/* Room Menu */}
+        {menuItems.length > 0 && (
+          <div className="mt-2 space-y-1">
+            {menuItems.map((item) => (
+              <p key={item.id} className="text-sm text-muted-foreground">
+                {item.name}: ${item.price.toFixed(2)}
+              </p>
+            ))}
+            <p className="font-bold text-muted-foreground">
+              Total: ${totalBill.toFixed(2)}
+            </p>
+          </div>
+        )}
       </header>
 
       <div className="flex-1 overflow-y-auto mb-4 space-y-2">
-        {messages.map((msg, idx) => (
+        {sortedMessages.map((msg, idx) => (
           <Card key={idx} className="p-3">
             <div className="flex justify-between items-center">
               <span className="font-semibold">{msg.senderName}</span>
@@ -192,20 +232,40 @@ const Room: React.FC = () => {
         <div ref={messagesEndRef} />
       </div>
 
-      <div className="flex gap-2">
+      {/* Input area with improved UX */}
+      <div className="flex gap-2 items-center">
         <Input
           placeholder="Type a message..."
           value={input}
           onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && handleSendMessage()}
+          onKeyDown={(e) => e.key === "Enter" && handleSend()}
         />
-        <Button onClick={handleSendMessage}>Send</Button>
-        <Input
-          type="file"
-          onChange={(e) => e.target.files && setFile(e.target.files[0])}
-        />
-        <Button onClick={handleSendFile} variant="secondary">
+
+        {/* Custom file input button */}
+        <label className="relative cursor-pointer bg-gray-200 text-[10px] hover:bg-gray-300 px-3 py-2 rounded flex items-center gap-1">
           <Paperclip />
+          <span>{file ? file.name : "Attach file"}</span>
+          <input
+            type="file"
+            className="absolute inset-0 opacity-0 cursor-pointer"
+            onChange={(e) => e.target.files && setFile(e.target.files[0])}
+          />
+          {file && (
+            <X
+              className="ml-2"
+              onClick={(e) => {
+                e.stopPropagation();
+                setFile(null);
+              }}
+            />
+          )}
+        </label>
+
+        <Button
+          onClick={handleSend}
+          disabled={!input.trim() && !file} // Send enabled if either exists
+        >
+          Send
         </Button>
       </div>
     </div>
