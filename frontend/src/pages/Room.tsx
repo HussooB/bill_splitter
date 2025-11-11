@@ -16,6 +16,7 @@ interface Message {
   text?: string;
   proofUrl?: string;
   createdAt: string;
+  roomId?: string;
 }
 
 interface MenuItem {
@@ -41,12 +42,12 @@ const Room: React.FC = () => {
 
   const token = localStorage.getItem("token");
 
-  // Scroll to bottom whenever messages change
+  // Scroll to bottom when new messages appear
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  // --- Fetch room info & past messages ---
+  // Fetch room info & previous messages
   useEffect(() => {
     if (!token) {
       toast({ title: "Unauthorized", description: "Please log in." });
@@ -92,7 +93,11 @@ const Room: React.FC = () => {
               proofUrl: msg.proofUrl || msg.fileUrl,
               createdAt: msg.createdAt || new Date().toISOString(),
             }))
-            .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
+            .sort(
+              (a, b) =>
+                new Date(a.createdAt).getTime() -
+                new Date(b.createdAt).getTime()
+            )
         );
       } catch (err) {
         console.error(err);
@@ -103,7 +108,7 @@ const Room: React.FC = () => {
     fetchMessages();
   }, [roomId, token, toast, navigate]);
 
-  // --- Socket setup ---
+  // --- Setup socket.io ---
   useEffect(() => {
     if (!token) return;
 
@@ -114,60 +119,69 @@ const Room: React.FC = () => {
 
     s.on("connect", () => {
       console.log("Socket connected:", s.id);
-      // Emit joinRoom with displayName
       s.emit("joinRoom", roomId, displayName);
     });
 
-    s.on("connect_error", (err) => console.error("Socket connect error:", err));
+    s.on("connect_error", (err) =>
+      console.error("Socket connect error:", err)
+    );
 
-    // --- Presence events ---
+    // --- Presence ---
     s.on("userList", (users: string[]) => {
-      setOnlineUsers(users);
+      const filtered = users.filter((u) => u !== displayName);
+      setOnlineUsers(filtered);
     });
 
-    // Only show toast for others joining
     s.on("userJoined", (name: string) => {
-      if (name !== displayName) {
-        toast({ title: `${name} joined the room` });
-      }
+      if (name !== displayName) toast({ title: `${name} joined the room` });
     });
 
     s.on("userLeft", (name: string) => {
-      toast({ title: `${name} left the room` });
+      if (name !== displayName) toast({ title: `${name} left the room` });
     });
 
     // --- Message events ---
     s.on("receiveMessage", (msg: Message) => {
-      setMessages((prev) => [...prev, msg]);
+      if (msg.senderName === displayName) return; // skip own messages
+      setMessages((prev) =>
+        prev.some((m) => m.id === msg.id) ? prev : [...prev, msg]
+      );
     });
 
     s.on("receiveProof", (proof: Message) => {
-      setMessages((prev) => [...prev, proof]);
+      // ✅ prevent duplicates for files too
+      setMessages((prev) =>
+        prev.some((m) => m.id === proof.id) ? prev : [...prev, proof]
+      );
     });
 
     setSocket(s);
-
     return () => {
       s.disconnect();
     };
   }, [roomId, token, displayName, toast]);
 
-  // --- Send messages & files ---
+  // --- Send message or file ---
   const handleSend = async () => {
     if (!socket || (!input.trim() && !file)) return;
 
+    // --- Send text message ---
     if (input.trim()) {
-      const msg = {
+      const msg: Message = {
         id: crypto.randomUUID(),
         senderName: displayName,
         text: input.trim(),
         createdAt: new Date().toISOString(),
         roomId,
       };
+
+      // Add locally first
+      setMessages((prev) => [...prev, msg]);
       socket.emit("sendMessage", msg);
       setInput("");
     }
 
+    // --- Send file proof ---
     if (file) {
       const formData = new FormData();
       formData.append("file", file);
@@ -181,7 +195,7 @@ const Room: React.FC = () => {
         if (!res.ok) throw new Error("Failed to upload file");
         const data = await res.json();
 
-        const proofMsg = {
+        const proofMsg: Message = {
           id: data.proof.id,
           senderName: displayName,
           proofUrl: data.proof.fileUrl,
@@ -189,7 +203,14 @@ const Room: React.FC = () => {
           roomId,
         };
 
+        // ✅ Don't re-add if socket will send it back
         socket.emit("sendProof", proofMsg);
+        setMessages((prev) =>
+          prev.some((m) => m.id === proofMsg.id)
+            ? prev
+            : [...prev, proofMsg]
+        );
+
         setFile(null);
         toast({ title: "File sent!" });
       } catch (err: any) {
@@ -199,7 +220,10 @@ const Room: React.FC = () => {
     }
   };
 
-  const totalBill = menuItems.reduce((sum, item) => sum + (item.price || 0), 0);
+  const totalBill = menuItems.reduce(
+    (sum, item) => sum + (item.price || 0),
+    0
+  );
 
   return (
     <div className="min-h-screen flex flex-col bg-gradient-to-br from-primary/5 via-background to-accent/5 p-4">
@@ -211,12 +235,11 @@ const Room: React.FC = () => {
           </Button>
         </div>
 
-        {/* 🧍 Online users */}
-        {onlineUsers.length > 0 && (
-          <div className="mt-2 text-sm text-muted-foreground">
-            <strong>Online:</strong> {onlineUsers.join(", ")}
-          </div>
-        )}
+        {/* Online users */}
+        <div className="mt-2 text-sm text-muted-foreground">
+          <strong>Online:</strong> You
+          {onlineUsers.length ? ", " + onlineUsers.join(", ") : ""}
+        </div>
 
         {menuItems.length > 0 && (
           <div className="mt-2 space-y-1">
@@ -232,11 +255,19 @@ const Room: React.FC = () => {
         )}
       </header>
 
+      {/* Messages */}
       <div className="flex-1 overflow-y-auto mb-4 space-y-2">
         {messages.map((msg) => (
-          <Card key={msg.id} className="p-3">
+          <Card
+            key={msg.id}
+            className={`p-3 ${
+              msg.senderName === displayName ? "bg-primary/10" : ""
+            }`}
+          >
             <div className="flex justify-between items-center">
-              <span className="font-semibold">{msg.senderName}</span>
+              <span className="font-semibold">
+                {msg.senderName === displayName ? "You" : msg.senderName}
+              </span>
               <span className="text-xs text-muted-foreground">
                 {new Date(msg.createdAt).toLocaleTimeString()}
               </span>
@@ -254,6 +285,7 @@ const Room: React.FC = () => {
         <div ref={messagesEndRef} />
       </div>
 
+      {/* Input bar */}
       <div className="flex gap-2 items-center">
         <Input
           placeholder="Type a message..."
